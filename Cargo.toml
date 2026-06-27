@@ -8,6 +8,10 @@ documentation = "https://b-inary.github.io/postflop_solver/postflop_solver/"
 repository = "https://github.com/b-inary/postflop-solver"
 license = "AGPL-3.0-or-later"
 
+[[bin]]
+name = "interactive"
+path = "src/bin/interactive.rs"
+
 [dependencies]
 bincode = { version = "=2.0.0-rc.3", optional = true }
 bincode_derive = { version = "=2.0.0-rc.3", optional = true }
