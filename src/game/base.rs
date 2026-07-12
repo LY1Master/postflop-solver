@@ -43,7 +43,9 @@ impl Game for PostFlopGame {
         player: usize,
         cfreach: &[f32],
     ) {
-        if self.bunching_num_dead_cards == 0 {
+        if node.is_depth_limit_terminal() {
+            self.evaluate_depth_limited(result, node, player, cfreach);
+        } else if self.bunching_num_dead_cards == 0 {
             self.evaluate_internal(result, node, player, cfreach);
         } else {
             self.evaluate_internal_bunching(result, node, player, cfreach);
@@ -73,7 +75,8 @@ impl Game for PostFlopGame {
 
     #[inline]
     fn is_ready(&self) -> bool {
-        self.state == State::MemoryAllocated && self.storage_mode == BoardState::River
+        let expected_mode = self.tree_config.depth_limit.unwrap_or(BoardState::River);
+        self.state == State::MemoryAllocated && self.storage_mode == expected_mode
     }
 
     #[inline]
@@ -319,8 +322,10 @@ impl PostFlopGame {
             panic!("Game is not successfully initialized");
         }
 
+        let effective_mode = self.tree_config.depth_limit.unwrap_or(BoardState::River);
+
         if self.state == State::MemoryAllocated
-            && self.storage_mode == BoardState::River
+            && self.storage_mode == effective_mode
             && self.is_compression_enabled == enable_compression
         {
             return;
@@ -349,8 +354,14 @@ impl PostFlopGame {
 
         self.allocate_memory_nodes();
 
-        self.storage_mode = BoardState::River;
-        self.target_storage_mode = BoardState::River;
+        self.storage_mode = effective_mode;
+        self.target_storage_mode = effective_mode;
+
+        // 深度限制求解：预计算全下权益矩阵和手牌分类
+        if self.tree_config.depth_limit.is_some() {
+            self.compute_equity_matrix();
+            self.compute_hand_categories();
+        }
     }
 
     /// Checks the card configuration.
@@ -501,6 +512,8 @@ impl PostFlopGame {
             }
         }
 
+        // valid_indices 和 hand_strength 始终需要计算
+        // all-in 路径不受 depth_limit 限制，展开到 showdown 时需要这些数据
         (
             self.valid_indices_flop,
             self.valid_indices_turn,
@@ -587,25 +600,48 @@ impl PostFlopGame {
     /// Counts the number of nodes in the game tree.
     #[inline]
     fn count_num_nodes(&self) -> [u64; 3] {
+        let depth_limit = self.tree_config.depth_limit;
+
+        // 检查是否有 all-in 路径绕过深度限制
+        let has_allin_bypass = depth_limit.map_or(false, |dl| {
+            has_allin_beyond_depth_limit(&self.action_root.lock(), dl, false)
+        });
+
         let (turn_coef, river_coef) = match (self.card_config.turn, self.card_config.river) {
             (NOT_DEALT, _) => {
-                let mut river_coef = 0;
-                let flop = self.card_config.flop;
-                let skip_cards = &self.isomorphism_card_turn;
-                let flop_mask: u64 = (1 << flop[0]) | (1 << flop[1]) | (1 << flop[2]);
-                let skip_mask: u64 = skip_cards.iter().map(|&card| 1 << card).sum();
-                for turn in 0..52 {
-                    if (1 << turn) & (flop_mask | skip_mask) == 0 {
-                        river_coef += 48 - self.isomorphism_card_river[turn & 3].len();
+                if depth_limit == Some(BoardState::Flop) && !has_allin_bypass {
+                    (0, 0)
+                } else {
+                    let mut river_coef = 0;
+                    let flop = self.card_config.flop;
+                    let skip_cards = &self.isomorphism_card_turn;
+                    let flop_mask: u64 = (1 << flop[0]) | (1 << flop[1]) | (1 << flop[2]);
+                    let skip_mask: u64 = skip_cards.iter().map(|&card| 1 << card).sum();
+                    for turn in 0..52 {
+                        if (1 << turn) & (flop_mask | skip_mask) == 0 {
+                            river_coef += 48 - self.isomorphism_card_river[turn & 3].len();
+                        }
                     }
+                    let river_coef = if depth_limit == Some(BoardState::Turn) && !has_allin_bypass {
+                        0
+                    } else {
+                        river_coef
+                    };
+                    (49 - self.isomorphism_card_turn.len(), river_coef)
                 }
-                (49 - self.isomorphism_card_turn.len(), river_coef)
             }
-            (turn, NOT_DEALT) => (1, 48 - self.isomorphism_card_river[turn as usize & 3].len()),
+            (turn, NOT_DEALT) => {
+                if depth_limit == Some(BoardState::Turn) && !has_allin_bypass {
+                    (1, 0)
+                } else {
+                    (1, 48 - self.isomorphism_card_river[turn as usize & 3].len())
+                }
+            }
             _ => (0, 1),
         };
 
-        let num_action_nodes = count_num_action_nodes(&self.action_root.lock());
+        let num_action_nodes =
+            count_num_action_nodes(&self.action_root.lock(), self.tree_config.initial_state);
 
         [
             num_action_nodes[0],
