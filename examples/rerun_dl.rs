@@ -9,6 +9,7 @@ struct BoardDef {
     id: usize,
     name: &'static str,
     flop: &'static str,
+    turn: Option<&'static str>,  // None=flop mode, Some=Turn mode
     pot: i32,
     stack: i32,
     spr: i32,
@@ -16,29 +17,60 @@ struct BoardDef {
     out_dir: &'static str,
 }
 
+fn make_test(id: usize, name: &'static str, flop: &'static str, turn: Option<&'static str>, pot: i32, stack: i32, spr: i32, src_dir: &'static str, out_dir: &'static str) -> BoardDef {
+    BoardDef { id, name, flop, turn, pot, stack, spr, src_dir, out_dir }
+}
+
 fn main() {
-    let tests = [
-        BoardDef { id: 1, name: "三条面", flop: "8h8s8d", pot: 5, stack: 25, spr: 5, src_dir: "doc/spr5", out_dir: "doc/flop_pure" },
-        BoardDef { id: 2, name: "对子彩虹", flop: "KhKd5c", pot: 5, stack: 25, spr: 5, src_dir: "doc/spr5", out_dir: "doc/flop_pure" },
-        BoardDef { id: 3, name: "对子两同花", flop: "KhKc5c", pot: 5, stack: 25, spr: 5, src_dir: "doc/spr5", out_dir: "doc/flop_pure" },
-        BoardDef { id: 4, name: "纯彩虹", flop: "QsJh4d", pot: 5, stack: 25, spr: 5, src_dir: "doc/spr5", out_dir: "doc/flop_pure" },
-        BoardDef { id: 5, name: "两同花A", flop: "QsJs4h", pot: 5, stack: 25, spr: 5, src_dir: "doc/spr5", out_dir: "doc/flop_pure" },
-        BoardDef { id: 6, name: "两同花B", flop: "QhJs4s", pot: 5, stack: 25, spr: 5, src_dir: "doc/spr5", out_dir: "doc/flop_pure" },
-        BoardDef { id: 7, name: "单调面A", flop: "AsJs9s", pot: 5, stack: 25, spr: 5, src_dir: "doc/spr5", out_dir: "doc/flop_pure" },
-        BoardDef { id: 8, name: "单调面B", flop: "8s6s3s", pot: 5, stack: 25, spr: 5, src_dir: "doc/spr5", out_dir: "doc/flop_pure" },
-        BoardDef { id: 1, name: "三条面", flop: "8h8s8d", pot: 5, stack: 100, spr: 20, src_dir: "doc/spr20", out_dir: "doc/flop_pure" },
-        BoardDef { id: 2, name: "对子彩虹", flop: "KhKd5c", pot: 5, stack: 100, spr: 20, src_dir: "doc/spr20", out_dir: "doc/flop_pure" },
-        BoardDef { id: 3, name: "对子两同花", flop: "KhKc5c", pot: 5, stack: 100, spr: 20, src_dir: "doc/spr20", out_dir: "doc/flop_pure" },
-        BoardDef { id: 4, name: "纯彩虹", flop: "QsJh4d", pot: 5, stack: 100, spr: 20, src_dir: "doc/spr20", out_dir: "doc/flop_pure" },
-        BoardDef { id: 5, name: "两同花A", flop: "QsJs4h", pot: 5, stack: 100, spr: 20, src_dir: "doc/spr20", out_dir: "doc/flop_pure" },
-        BoardDef { id: 6, name: "两同花B", flop: "QhJs4s", pot: 5, stack: 100, spr: 20, src_dir: "doc/spr20", out_dir: "doc/flop_pure" },
-        BoardDef { id: 7, name: "单调面A", flop: "AsJs9s", pot: 5, stack: 100, spr: 20, src_dir: "doc/spr20", out_dir: "doc/flop_pure" },
-        BoardDef { id: 8, name: "单调面B", flop: "8s6s3s", pot: 5, stack: 100, spr: 20, src_dir: "doc/spr20", out_dir: "doc/flop_pure" },
+    // 翻牌圈测试（flop DL + α）
+    let flop_tests = vec![
+        make_test(1, "三条面", "8h8s8d", None, 5, 25, 5, "doc/spr5", "doc/flop_pure"),
+        make_test(2, "对子彩虹", "KhKd5c", None, 5, 25, 5, "doc/spr5", "doc/flop_pure"),
+        make_test(3, "对子两同花", "KhKc5c", None, 5, 25, 5, "doc/spr5", "doc/flop_pure"),
+        make_test(4, "纯彩虹", "QsJh4d", None, 5, 25, 5, "doc/spr5", "doc/flop_pure"),
+        make_test(5, "两同花A", "QsJs4h", None, 5, 25, 5, "doc/spr5", "doc/flop_pure"),
+        make_test(6, "两同花B", "QhJs4s", None, 5, 25, 5, "doc/spr5", "doc/flop_pure"),
+        make_test(7, "单调面A", "AsJs9s", None, 5, 25, 5, "doc/spr5", "doc/flop_pure"),
+        make_test(8, "单调面B", "8s6s3s", None, 5, 25, 5, "doc/spr5", "doc/flop_pure"),
+        make_test(1, "三条面", "8h8s8d", None, 5, 100, 20, "doc/spr20", "doc/flop_pure"),
+        make_test(2, "对子彩虹", "KhKd5c", None, 5, 100, 20, "doc/spr20", "doc/flop_pure"),
+        make_test(3, "对子两同花", "KhKc5c", None, 5, 100, 20, "doc/spr20", "doc/flop_pure"),
+        make_test(4, "纯彩虹", "QsJh4d", None, 5, 100, 20, "doc/spr20", "doc/flop_pure"),
+        make_test(5, "两同花A", "QsJs4h", None, 5, 100, 20, "doc/spr20", "doc/flop_pure"),
+        make_test(6, "两同花B", "QhJs4s", None, 5, 100, 20, "doc/spr20", "doc/flop_pure"),
+        make_test(7, "单调面A", "AsJs9s", None, 5, 100, 20, "doc/spr20", "doc/flop_pure"),
+        make_test(8, "单调面B", "8s6s3s", None, 5, 100, 20, "doc/spr20", "doc/flop_pure"),
+    ];
+    // 转牌圈测试（turn DL + α）
+    let turn_tests = vec![
+        make_test(1, "三条面", "8h8s8d", Some("Ac"), 5, 25, 5, "doc/turn_spr5", "doc/turn_pure"),
+        make_test(2, "对子彩虹", "KhKd5c", Some("7h"), 5, 25, 5, "doc/turn_spr5", "doc/turn_pure"),
+        make_test(3, "对子两同花", "KhKc5c", Some("7h"), 5, 25, 5, "doc/turn_spr5", "doc/turn_pure"),
+        make_test(4, "纯彩虹", "QsJh4d", Some("9c"), 5, 25, 5, "doc/turn_spr5", "doc/turn_pure"),
+        make_test(5, "两同花A", "QsJs4h", Some("Ad"), 5, 25, 5, "doc/turn_spr5", "doc/turn_pure"),
+        make_test(6, "两同花B", "QhJs4s", Some("Ad"), 5, 25, 5, "doc/turn_spr5", "doc/turn_pure"),
+        make_test(7, "单调面A", "AsJs9s", Some("Kh"), 5, 25, 5, "doc/turn_spr5", "doc/turn_pure"),
+        make_test(8, "单调面B", "8s6s3s", Some("5h"), 5, 25, 5, "doc/turn_spr5", "doc/turn_pure"),
+        make_test(1, "三条面", "8h8s8d", Some("Ac"), 5, 100, 20, "doc/turn_spr20", "doc/turn_pure"),
+        make_test(2, "对子彩虹", "KhKd5c", Some("7h"), 5, 100, 20, "doc/turn_spr20", "doc/turn_pure"),
+        make_test(3, "对子两同花", "KhKc5c", Some("7h"), 5, 100, 20, "doc/turn_spr20", "doc/turn_pure"),
+        make_test(4, "纯彩虹", "QsJh4d", Some("9c"), 5, 100, 20, "doc/turn_spr20", "doc/turn_pure"),
+        make_test(5, "两同花A", "QsJs4h", Some("Ad"), 5, 100, 20, "doc/turn_spr20", "doc/turn_pure"),
+        make_test(6, "两同花B", "QhJs4s", Some("Ad"), 5, 100, 20, "doc/turn_spr20", "doc/turn_pure"),
+        make_test(7, "单调面A", "AsJs9s", Some("Kh"), 5, 100, 20, "doc/turn_spr20", "doc/turn_pure"),
+        make_test(8, "单调面B", "8s6s3s", Some("5h"), 5, 100, 20, "doc/turn_spr20", "doc/turn_pure"),
     ];
 
     std::fs::create_dir_all("doc/flop_pure").unwrap();
+    std::fs::create_dir_all("doc/turn_pure").unwrap();
 
-    for t in &tests {
+    run_tests(&flop_tests, "翻牌圈");
+    run_tests(&turn_tests, "转牌圈");
+    println!("全部完成");
+}
+
+fn run_tests(tests: &[BoardDef], mode: &str) {
+    for t in tests {
         let src_file = format!("{}/{}_{}_SPR{}.csv", t.src_dir, t.flop, t.name, t.spr);
         let out_file = format!("{}/{}_{}_SPR{}.csv", t.out_dir, t.flop, t.name, t.spr);
 
@@ -78,16 +110,21 @@ fn main() {
         let oop_range = "66+,A8s+,A5s-A4s,AJo+,K9s+,KQo,QTs+,JTs,96s+,85s+,75s+,65s,54s";
         let ip_range = "QQ-22,AQs-A2s,ATo+,K5s+,KJo+,Q8s+,J8s+,T7s+,96s+,86s+,75s+,64s+,53s+";
 
+        let is_turn = t.turn.is_some();
+        let turn_card = t.turn.and_then(|s| card_from_str(s).ok()).unwrap_or(NOT_DEALT);
+        let initial_state = if is_turn { BoardState::Turn } else { BoardState::Flop };
+        let dl_limit = if is_turn { BoardState::Turn } else { BoardState::Flop };
+
         let card_config = CardConfig {
             range: [oop_range.parse().unwrap(), ip_range.parse().unwrap()],
             flop: flop_cards,
-            turn: NOT_DEALT,
+            turn: turn_card,
             river: NOT_DEALT,
         };
 
         let bet_sizes = BetSizeOptions::try_from(("60%, e, a", "2.5x")).unwrap();
         let tree_config = TreeConfig {
-            initial_state: BoardState::Flop,
+            initial_state,
             starting_pot,
             effective_stack,
             rake_rate: 0.0,
@@ -100,7 +137,7 @@ fn main() {
             add_allin_threshold: 1.5,
             force_allin_threshold: 0.15,
             merging_threshold: 0.1,
-            depth_limit: Some(BoardState::Flop),
+            depth_limit: if is_turn { None } else { Some(dl_limit) },
             ..Default::default()
         };
 
@@ -138,7 +175,8 @@ fn main() {
             for (i, name) in names.iter().enumerate() {
                 if weights[i] == 0.0 { continue; }
                 let (c1, c2) = cards[i];
-                let (cat, draw) = classify_hand((c1, c2), flop_cards, NOT_DEALT);
+                let classify_turn = if is_turn { turn_card } else { NOT_DEALT };
+                let (cat, draw) = classify_hand((c1, c2), flop_cards, classify_turn);
                 let bucket = HandBucket::classify(cat, draw, (c1, c2), flop_cards);
                 let pos = if player == 0 { "OOP" } else { "IP" };
                 let key = format!("{}|{}|{:?}", pos, name, draw);

@@ -590,25 +590,37 @@ pub fn has_nut_flush_draw(hero: (Card, Card), flush_suit: u8) -> bool {
 
 /// 求解后手牌桶固定修正系数 α（v4 方案）。
 ///
-/// 修正公式：`修正后 DLEv = DLEv × α(牌面, 位置, 桶)`
+/// 修正公式：`修正后 DLEv = DLEv × α(牌面, 位置, 桶, 街)`
 ///
-/// α 系数从 doc/spr5 和 doc/spr20 的数据回归得到，
-/// 经验证在 SPR=5 和 SPR=20 下均有效（平均偏差从 26% 降至 10%）。
+/// 翻牌圈和转牌圈的 α 系数各自独立回归。
 pub struct BoardCorrectionContext {
     pub texture: BoardTexture,
+    pub is_turn: bool,
 }
 
 impl BoardCorrectionContext {
-    /// 创建修正上下文。
+    /// 创建翻牌圈修正上下文。
     pub fn new(texture: BoardTexture) -> Self {
-        Self { texture }
+        Self { texture, is_turn: false }
+    }
+    /// 创建转牌圈修正上下文。
+    pub fn new_turn(texture: BoardTexture) -> Self {
+        Self { texture, is_turn: true }
     }
 
-    /// 查询固定修正系数 α（基于纯 equity DLEv 回归）。
-    ///
+    /// 查询修正系数 α。
     /// `position`: 0=OOP, 1=IP
     #[inline]
     pub fn alpha(&self, position: usize, bucket: HandBucket) -> f64 {
+        if self.is_turn {
+            self.turn_alpha(position, bucket)
+        } else {
+            self.flop_alpha(position, bucket)
+        }
+    }
+
+    /// 翻牌圈 α 系数（基于纯 equity DLEv 回归）。
+    fn flop_alpha(&self, position: usize, bucket: HandBucket) -> f64 {
         let is_oop = position == 0;
         match self.texture {
             BoardTexture::Trips => match (is_oop, bucket) {
@@ -724,10 +736,10 @@ impl BoardCorrectionContext {
         }
     }
 
-    /// 对单手牌的 DL EV 应用修正（v4 固定 α 方案）。
-    ///
-    /// `position`: 0=OOP, 1=IP
-    /// `draw` 参数保留供后续扩展，当前未使用。
+    /// 转牌圈 α 系数（基于纯 equity DLEv 回归）。
+    fn turn_alpha(&self, _position: usize, _bucket: HandBucket) -> f64 {
+        1.0
+    }
     pub fn apply(
         &self,
         dlev: f32,

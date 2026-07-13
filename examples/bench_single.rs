@@ -9,6 +9,10 @@ struct Args {
     #[arg(long)]
     flop: String,
 
+    /// 转牌（可选），如 "Ac"。设置后改为转牌圈模式
+    #[arg(long)]
+    turn: Option<String>,
+
     /// 输出 CSV 文件路径
     #[arg(long)]
     output: String,
@@ -46,6 +50,11 @@ fn main() {
     let texture = detect_board_texture(flop);
     let texture_label = board_texture_label(texture);
 
+    // 解析转牌
+    let turn_card = args.turn.as_ref().map(|s| card_from_str(s).expect("Invalid turn card format"));
+    let is_turn_mode = turn_card.is_some();
+    let turn = turn_card.unwrap_or(NOT_DEALT);
+
     // BB unit: multiply by 10 for integer pot/stack
     let starting_pot = args.pot * 10;
     let effective_stack = args.stack * 10;
@@ -57,14 +66,17 @@ fn main() {
     let card_config = CardConfig {
         range: [oop_range.parse().unwrap(), ip_range.parse().unwrap()],
         flop,
-        turn: NOT_DEALT,
+        turn,
         river: NOT_DEALT,
     };
 
     let bet_sizes = BetSizeOptions::try_from(("60%, e, a", "2.5x")).unwrap();
 
+    let initial_state = if is_turn_mode { BoardState::Turn } else { BoardState::Flop };
+    let dl_limit = if is_turn_mode { BoardState::Turn } else { BoardState::Flop };
+
     let base_tree_config = TreeConfig {
-        initial_state: BoardState::Flop,
+        initial_state,
         starting_pot,
         effective_stack,
         rake_rate: args.rake,
@@ -82,7 +94,10 @@ fn main() {
 
     let target_exp = starting_pot as f32 * 0.005;
 
-    println!("牌面: {} ({})", args.flop, texture_label);
+    let mode_str = if is_turn_mode { "转牌圈" } else { "翻牌圈" };
+    let turn_str = if is_turn_mode { format!(", turn={}", args.turn.as_ref().unwrap()) } else { String::new() };
+    println!("牌面: {}{} ({})", args.flop, turn_str, texture_label);
+    println!("模式: {}", mode_str);
     println!("SPR: {:.1} (pot={}BB, stack={}BB)", spr, args.pot, args.stack);
 
     // === Full Solve ===
@@ -101,7 +116,8 @@ fn main() {
     print!("DL solve... ");
     let t = Instant::now();
     let mut dl_config = base_tree_config.clone();
-    dl_config.depth_limit = Some(BoardState::Flop);
+    // 转牌圈全树展开
+    if !is_turn_mode { dl_config.depth_limit = Some(dl_limit); }
     dl_config.equity_pos_correction = 0.05;
     let mut game_dl = PostFlopGame::with_config(
         card_config.clone(),

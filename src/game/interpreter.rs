@@ -729,7 +729,12 @@ impl PostFlopGame {
 
         let flop = self.card_config.flop;
         let texture = detect_board_texture(flop);
-        let ctx = BoardCorrectionContext::new(texture);
+        let is_turn_mode = self.tree_config.depth_limit.map_or(true, |dl| dl == BoardState::Turn);
+        let ctx = if is_turn_mode {
+            BoardCorrectionContext::new_turn(texture)
+        } else {
+            BoardCorrectionContext::new(texture)
+        };
 
         let cards = self.private_cards(player);
         let turn = self.card_config.turn;
