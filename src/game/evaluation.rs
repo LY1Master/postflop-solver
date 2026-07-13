@@ -475,10 +475,9 @@ impl PostFlopGame {
         }
     }
 
-    /// 深度限制终端节点求值。
+    /// 深度限制终端节点求值（纯 equity 版本，不含位置和手牌系数）。
     ///
-    /// 使用预计算的权益矩阵 + 手牌分类实现率修正：
-    /// `result[h] = Σ_v cfreach[v] * equity_matrix[h][v] * factor * pos_coef * cat_coef`
+    /// `result[h] = Σ_v cfreach[v] × equity_matrix[h][v] × factor`
     pub(super) fn evaluate_depth_limited(
         &self,
         result: &mut [MaybeUninit<f32>],
@@ -490,23 +489,6 @@ impl PostFlopGame {
         let half_pot = 0.5 * pot;
         let rake = min(pot * self.tree_config.rake_rate, self.tree_config.rake_cap);
         let factor = ((half_pot - 0.5 * rake) / self.num_combinations) as f32;
-
-        // 位置乘法系数：IP = 1 + δ, OOP = 1 - δ
-        let eq_pos = self.tree_config.equity_pos_correction;
-        let pos_coef = if player == 1 {
-            1.0 + eq_pos
-        } else {
-            1.0 - eq_pos
-        };
-
-        // 手牌分类系数（根据当前街选择翻牌或转牌系数集）
-        let depth_limit = self.tree_config.depth_limit.unwrap();
-        let cat_coefs = if depth_limit == BoardState::Flop {
-            &self.tree_config.flop_category_correction
-        } else {
-            &self.tree_config.turn_category_correction
-        };
-        let categories = self.get_categories(player, node);
 
         let num_hero = self.private_cards[player].len();
         let num_villain = self.private_cards[player ^ 1].len();
@@ -568,12 +550,8 @@ impl PostFlopGame {
                 cfv += cfreach_vi * base_equity;
             }
 
-            // 手牌分类实现率系数
-            let (cat, draw) = categories[hi];
-            let cat_coef = cat_coefs.compute(cat, draw);
-
-            // 最终结果：cfv × factor × 位置系数 × 分类系数
-            let chip_result = cfv * factor as f64 * pos_coef * cat_coef;
+            // 最终结果：cfv × factor（纯 equity 估值，不含位置/手牌系数）
+            let chip_result = cfv * factor as f64;
 
             result[hi] = chip_result as f32;
         }
