@@ -112,21 +112,60 @@ fn main() {
     let exp_full = solve(&mut game_full, 2000, target_exp, false);
     println!("{:.1}s (exploit={:.4})", t.elapsed().as_secs_f64(), exp_full);
 
-    // === DL Solve ===
-    print!("DL solve... ");
+    // === DL / 跨街求解 ===
     let t = Instant::now();
-    let mut dl_config = base_tree_config.clone();
-    // 转牌圈全树展开
-    if !is_turn_mode { dl_config.depth_limit = Some(dl_limit); }
-    dl_config.equity_pos_correction = 0.05;
-    let mut game_dl = PostFlopGame::with_config(
-        card_config.clone(),
-        ActionTree::new(dl_config).unwrap(),
-    )
-    .unwrap();
-    game_dl.allocate_memory(false);
-    let exp_dl = solve(&mut game_dl, 2000, target_exp, false);
-    println!("{:.1}s (exploit={:.4})", t.elapsed().as_secs_f64(), exp_dl);
+    let mut game_dl;
+
+    if is_turn_mode {
+        // 阶段1: 翻牌圈 DL 求解 → 提取范围权重
+        print!("Flop DL... ");
+        let mut dl_config = base_tree_config.clone();
+        dl_config.depth_limit = Some(BoardState::Flop);
+        dl_config.equity_pos_correction = 0.05;
+        let mut game_flop = PostFlopGame::with_config(
+            card_config.clone(),
+            ActionTree::new(dl_config).unwrap(),
+        ).unwrap();
+        game_flop.allocate_memory(false);
+        let exp_flop = solve(&mut game_flop, 2000, target_exp, false);
+        print!("{:.1}s → ", t.elapsed().as_secs_f64());
+
+        // 提取翻牌后的归一化权重
+        game_flop.back_to_root();
+        game_flop.cache_normalized_weights();
+        let flop_weights = [
+            game_flop.normalized_weights(0).to_vec(),
+            game_flop.normalized_weights(1).to_vec(),
+        ];
+        drop(game_flop);
+
+        // 阶段2: 转牌圈全树展开（继承翻牌权重）
+        print!("Turn Full... ");
+        let t2 = Instant::now();
+        let turn_config = base_tree_config.clone();
+        let mut game_turn = PostFlopGame::with_config(
+            card_config.clone(),
+            ActionTree::new(turn_config).unwrap(),
+        ).unwrap();
+        game_turn.allocate_memory(false);
+        game_turn.set_custom_initial_weights(flop_weights);
+        let exp_turn = solve(&mut game_turn, 2000, target_exp, false);
+        println!("{:.1}s (flop={:.4}, turn={:.4})", t2.elapsed().as_secs_f64(), exp_flop, exp_turn);
+        game_dl = game_turn;
+    } else {
+        print!("DL solve... ");
+        let mut dl_config = base_tree_config.clone();
+        dl_config.depth_limit = Some(BoardState::Flop);
+        dl_config.equity_pos_correction = 0.05;
+        game_dl = PostFlopGame::with_config(
+            card_config.clone(),
+            ActionTree::new(dl_config).unwrap(),
+        ).unwrap();
+        game_dl.allocate_memory(false);
+        let exp_dl = solve(&mut game_dl, 2000, target_exp, false);
+        println!("{:.1}s (exploit={:.4})", t.elapsed().as_secs_f64(), exp_dl);
+    }
+    let dl_time = t.elapsed().as_secs_f64();
 
     // === Collect data ===
     game_full.back_to_root();

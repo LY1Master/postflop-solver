@@ -317,6 +317,44 @@ impl PostFlopGame {
     }
 
     /// Allocates the memory.
+    /// 用自定义权重替换初始手牌权重。
+    ///
+    /// 用于跨街范围传递：翻牌圈 DL 求解后，将 `normalized_weights`
+    /// 传入转牌圈或河牌圈子博弈。
+    ///
+    /// `weights[player]` 的长度必须与 `private_cards[player]` 一致。
+    pub fn set_custom_initial_weights(&mut self, weights: [Vec<f32>; 2]) {
+        if self.state <= State::Uninitialized {
+            panic!("Game is not successfully initialized");
+        }
+        for player in 0..2 {
+            assert_eq!(
+                weights[player].len(),
+                self.initial_weights[player].len(),
+                "Weight vector length mismatch for player {}",
+                player
+            );
+            self.initial_weights[player] = weights[player].clone();
+        }
+        // 重新计算 num_combinations
+        self.num_combinations = 0.0;
+        for (&(c1, c2), &w1) in self.private_cards[0]
+            .iter()
+            .zip(self.initial_weights[0].iter())
+        {
+            let oop_mask: u64 = (1 << c1) | (1 << c2);
+            for (&(c3, c4), &w2) in self.private_cards[1]
+                .iter()
+                .zip(self.initial_weights[1].iter())
+            {
+                let ip_mask: u64 = (1 << c3) | (1 << c4);
+                if oop_mask & ip_mask == 0 {
+                    self.num_combinations += w1 as f64 * w2 as f64;
+                }
+            }
+        }
+    }
+
     pub fn allocate_memory(&mut self, enable_compression: bool) {
         if self.state <= State::Uninitialized {
             panic!("Game is not successfully initialized");
