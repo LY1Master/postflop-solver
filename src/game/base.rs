@@ -1,5 +1,7 @@
 use super::*;
 use crate::bunching::*;
+use crate::card::NOT_DEALT;
+use crate::hand::{classify_hand, HandBucket};
 use crate::interface::*;
 use crate::utility::*;
 use std::mem::{self, MaybeUninit};
@@ -399,6 +401,22 @@ impl PostFlopGame {
         if self.tree_config.depth_limit.is_some() {
             self.compute_equity_matrix();
             self.compute_hand_categories();
+
+            // 计算对手范围中纯空气比例（用于 fold equity 估计）
+            for player in 0..2 {
+                let flop = self.card_config.flop;
+                let hands = &self.private_cards[player];
+                let weights = &self.initial_weights[player];
+                let total_w: f64 = weights.iter().map(|&w| w as f64).sum();
+                let mut air_w: f64 = 0.0;
+                for (i, &(c1, c2)) in hands.iter().enumerate() {
+                    let (cat, draw) = classify_hand((c1, c2), flop, NOT_DEALT);
+                    if HandBucket::classify(cat, draw, (c1, c2), flop) == HandBucket::Trash {
+                        air_w += weights[i] as f64;
+                    }
+                }
+                self.air_ratio[player] = if total_w > 0.0 { air_w / total_w } else { 0.0 };
+            }
         }
     }
 

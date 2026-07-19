@@ -28,6 +28,26 @@ struct Args {
     /// 抽水比例（0.0 ~ 1.0）
     #[arg(long, default_value = "0.0")]
     rake: f64,
+
+    /// OOP 范围（默认使用标准范围）
+    #[arg(long, default_value = "66+,A8s+,A5s-A4s,AJo+,K9s+,KQo,QTs+,JTs,96s+,85s+,75s+,65s,54s")]
+    oop_range: String,
+
+    /// IP 范围（默认使用标准范围）
+    #[arg(long, default_value = "QQ-22,AQs-A2s,ATo+,K5s+,KJo+,Q8s+,J8s+,T7s+,96s+,86s+,75s+,64s+,53s+")]
+    ip_range: String,
+
+    /// 下注尺寸（格式同 BetSizeOptions）
+    #[arg(long, default_value = "60%, e, a")]
+    bet_sizes: String,
+
+    /// DL截断阶段: flop(翻牌截断) 或 turn(转牌截断)
+    #[arg(long, default_value = "flop")]
+    dl_stage: String,
+
+    /// 迭代次数
+    #[arg(long, default_value = "2000")]
+    iterations: u32,
 }
 
 fn board_texture_label(texture: BoardTexture) -> &'static str {
@@ -41,6 +61,33 @@ fn board_texture_label(texture: BoardTexture) -> &'static str {
         BoardTexture::MonotoneA => "单调面A",
         BoardTexture::MonotoneB => "单调面B",
     }
+}
+
+/// 输出当前节点的策略到 JSON
+fn dump_strategy(game: &PostFlopGame, prefix: &str) -> String {
+    if game.is_terminal_node() || game.is_chance_node() {
+        return String::new();
+    }
+    let actions = game.available_actions();
+    let action_labels: Vec<String> = actions.iter().map(|a| format!("{:?}", a)).collect();
+    let strategy = game.strategy();
+    let player = game.current_player();
+    let cards = game.private_cards(player);
+    let names = holes_to_strings(cards).unwrap();
+    let num_actions = actions.len();
+    let num_hands = names.len();
+
+    let mut out = String::new();
+    for (h, name) in names.iter().enumerate() {
+        let mut probs = String::new();
+        for a in 0..num_actions {
+            if a > 0 { probs.push(','); }
+            probs.push_str(&format!("{:.4}", strategy[h + a * num_hands]));
+        }
+        if h > 0 { out.push('\n'); }
+        out.push_str(&format!("{}{},{},{}", prefix, name, action_labels.join("|"), probs));
+    }
+    out
 }
 
 fn main() {
@@ -60,20 +107,21 @@ fn main() {
     let effective_stack = args.stack * 10;
     let spr = args.stack as f64 / args.pot as f64;
 
-    let oop_range = "66+,A8s+,A5s-A4s,AJo+,K9s+,KQo,QTs+,JTs,96s+,85s+,75s+,65s,54s";
-    let ip_range = "QQ-22,AQs-A2s,ATo+,K5s+,KJo+,Q8s+,J8s+,T7s+,96s+,86s+,75s+,64s+,53s+";
-
     let card_config = CardConfig {
-        range: [oop_range.parse().unwrap(), ip_range.parse().unwrap()],
+        range: [args.oop_range.parse().unwrap(), args.ip_range.parse().unwrap()],
         flop,
         turn,
         river: NOT_DEALT,
     };
 
-    let bet_sizes = BetSizeOptions::try_from(("60%, e, a", "2.5x")).unwrap();
+    let bet_sizes = BetSizeOptions::try_from((args.bet_sizes.as_str(), "2.5x")).unwrap();
 
     let initial_state = if is_turn_mode { BoardState::Turn } else { BoardState::Flop };
     let dl_limit = if is_turn_mode { BoardState::Turn } else { BoardState::Flop };
+    let dl_stage: BoardState = match args.dl_stage.as_str() {
+        "turn" => BoardState::Turn,
+        _ => BoardState::Flop,
+    };
 
     let base_tree_config = TreeConfig {
         initial_state,
@@ -109,7 +157,7 @@ fn main() {
     )
     .unwrap();
     game_full.allocate_memory(false);
-    let exp_full = solve(&mut game_full, 2000, target_exp, false);
+    let exp_full = solve(&mut game_full, args.iterations, target_exp, false);
     println!("{:.1}s (exploit={:.4})", t.elapsed().as_secs_f64(), exp_full);
 
     // === DL / 跨街求解 ===
@@ -120,14 +168,14 @@ fn main() {
         // 阶段1: 翻牌圈 DL 求解 → 提取范围权重
         print!("Flop DL... ");
         let mut dl_config = base_tree_config.clone();
-        dl_config.depth_limit = Some(BoardState::Flop);
+        dl_config.depth_limit = Some(dl_stage);
         dl_config.equity_pos_correction = 0.05;
         let mut game_flop = PostFlopGame::with_config(
             card_config.clone(),
             ActionTree::new(dl_config).unwrap(),
         ).unwrap();
         game_flop.allocate_memory(false);
-        let exp_flop = solve(&mut game_flop, 2000, target_exp, false);
+        let exp_flop = solve(&mut game_flop, args.iterations, target_exp, false);
         print!("{:.1}s → ", t.elapsed().as_secs_f64());
 
         // 提取翻牌后的归一化权重
@@ -149,20 +197,20 @@ fn main() {
         ).unwrap();
         game_turn.allocate_memory(false);
         game_turn.set_custom_initial_weights(flop_weights);
-        let exp_turn = solve(&mut game_turn, 2000, target_exp, false);
+        let exp_turn = solve(&mut game_turn, args.iterations, target_exp, false);
         println!("{:.1}s (flop={:.4}, turn={:.4})", t2.elapsed().as_secs_f64(), exp_flop, exp_turn);
         game_dl = game_turn;
     } else {
         print!("DL solve... ");
         let mut dl_config = base_tree_config.clone();
-        dl_config.depth_limit = Some(BoardState::Flop);
+        dl_config.depth_limit = Some(dl_stage);
         dl_config.equity_pos_correction = 0.05;
         game_dl = PostFlopGame::with_config(
             card_config.clone(),
             ActionTree::new(dl_config).unwrap(),
         ).unwrap();
         game_dl.allocate_memory(false);
-        let exp_dl = solve(&mut game_dl, 2000, target_exp, false);
+        let exp_dl = solve(&mut game_dl, args.iterations, target_exp, false);
         println!("{:.1}s (exploit={:.4})", t.elapsed().as_secs_f64(), exp_dl);
     }
     let dl_time = t.elapsed().as_secs_f64();
@@ -242,4 +290,40 @@ fn main() {
     let csv_content = csv_lines.join("\n") + "\n";
     std::fs::write(&args.output, &csv_content).expect("Failed to write CSV");
     println!("CSV 已保存: {}", args.output);
+
+    // Dump OOP + IP strategy
+    let strat_file = args.output.replace(".csv", "_strategy.txt");
+    let mut strat = String::new();
+
+    // Full EV: OOP
+    strat.push_str("=== Full EV 根节点策略 (OOP) ===\n");
+    strat.push_str(&dump_strategy(&game_full, ""));
+    strat.push('\n');
+
+    // Full EV: IP (after OOP check)
+    game_full.back_to_root();
+    if !game_full.is_terminal_node() && !game_full.is_chance_node() && !game_full.available_actions().is_empty() {
+        game_full.play(0); // OOP CHECK
+        strat.push_str("=== Full EV IP根节点策略 (OOP Check后) ===\n");
+        strat.push_str(&dump_strategy(&game_full, ""));
+        strat.push('\n');
+    }
+
+    // DL: OOP
+    game_dl.back_to_root();
+    strat.push_str("=== DLEv_corrected 根节点策略 (OOP) ===\n");
+    strat.push_str(&dump_strategy(&game_dl, ""));
+    strat.push('\n');
+
+    // DL: IP
+    game_dl.back_to_root();
+    if !game_dl.is_terminal_node() && !game_dl.is_chance_node() && !game_dl.available_actions().is_empty() {
+        game_dl.play(0);
+        strat.push_str("=== DLEv_corrected IP根节点策略 (OOP Check后) ===\n");
+        strat.push_str(&dump_strategy(&game_dl, ""));
+        strat.push('\n');
+    }
+
+    std::fs::write(&strat_file, &strat).expect("Failed to write strategy");
+    println!("策略已保存: {}", strat_file);
 }

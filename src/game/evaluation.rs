@@ -332,6 +332,8 @@ impl PostFlopGame {
     ///
     /// `equity_matrix[hi * num_villain + vi]` 存储 OOP 手牌 hi 对阵 IP 手牌 vi 的
     /// 全下期望收益（归一化），对所有可能的 turn+river 组合取平均。
+    ///
+    /// 对于 Turn DL，额外计算 `equity_matrix_turn[turn_card]`（52张转牌各自的矩阵）。
     pub(super) fn compute_equity_matrix(&mut self) {
         let num_oop = self.private_cards[0].len();
         let num_ip = self.private_cards[1].len();
@@ -347,6 +349,7 @@ impl PostFlopGame {
             .add_card(flop[1] as usize)
             .add_card(flop[2] as usize);
 
+        // 翻牌级 matrix（1081 turn+river combos）
         let matrix = into_par_iter(0..num_oop)
             .map(|hi| {
                 let (h1, h2) = self.private_cards[0][hi];
@@ -406,6 +409,52 @@ impl PostFlopGame {
             .collect::<Vec<_>>();
 
         self.equity_matrix = matrix.into_iter().flatten().collect();
+
+        // Turn DL: 为每张可能的转牌计算 turn-level equity matrix
+        if self.tree_config.depth_limit == Some(BoardState::Turn) {
+            self.equity_matrix_turn = vec![Vec::new(); 52];
+            let num_oop = self.private_cards[0].len();
+            let num_ip = self.private_cards[1].len();
+
+            for turn_card in 0..52u8 {
+                if (1u64 << turn_card) & flop_mask != 0 {
+                    continue;
+                }
+                let turn_hand = flop_hand.add_card(turn_card as usize);
+
+                let matrix_t = into_par_iter(0..num_oop)
+                    .map(|hi| {
+                        let (h1, h2) = self.private_cards[0][hi];
+                        let hero_mask = (1u64 << h1) | (1u64 << h2);
+                        if hero_mask & (1u64 << turn_card) != 0 {
+                            return vec![0.0f32; num_ip];
+                        }
+                        let hero_6 = turn_hand.add_card(h1 as usize).add_card(h2 as usize);
+                        let known = flop_mask | (1u64 << turn_card) | hero_mask;
+
+                        let mut row = vec![0.0f32; num_ip];
+                        for vi in 0..num_ip {
+                            let (v1, v2) = self.private_cards[1][vi];
+                            let vm = (1u64 << v1) | (1u64 << v2);
+                            if vm & known == 0 {
+                                let villain_6 = turn_hand.add_card(v1 as usize).add_card(v2 as usize);
+                                let mut w = 0i32; let mut l = 0i32; let mut c = 0u32;
+                                let all_known = known | vm;
+                                for &r in &remaining {
+                                    if (1u64 << r) & all_known != 0 { continue; }
+                                    let hr = hero_6.add_card(r as usize).evaluate();
+                                    let vr = villain_6.add_card(r as usize).evaluate();
+                                    if hr > vr { w += 1 } else if hr < vr { l += 1 }
+                                    c += 1;
+                                }
+                                if c > 0 { row[vi] = (w - l) as f32 / c as f32; }
+                            }
+                        }
+                        row
+                    }).collect::<Vec<_>>();
+                self.equity_matrix_turn[turn_card as usize] = matrix_t.into_iter().flatten().collect();
+            }
+        }
     }
 
     /// 预计算手牌分类（成牌轴 + 听牌轴）。
@@ -514,10 +563,17 @@ impl PostFlopGame {
             }
         }
 
+        // Turn DL 时 turn 牌已是死牌，需要从 cfreach 扣除持有该牌的对手手牌
+        let turn_blocker = if self.tree_config.depth_limit == Some(BoardState::Turn) && node.turn != NOT_DEALT {
+            cfreach_minus[node.turn as usize]
+        } else {
+            0.0
+        };
+
         for hi in 0..num_hero {
             let (c1, c2) = hero_cards[hi];
             let effective_cfreach_sum =
-                cfreach_sum - cfreach_minus[c1 as usize] - cfreach_minus[c2 as usize];
+                cfreach_sum - cfreach_minus[c1 as usize] - cfreach_minus[c2 as usize] - turn_blocker;
 
             if effective_cfreach_sum == 0.0 {
                 continue;
@@ -536,7 +592,10 @@ impl PostFlopGame {
                     continue;
                 }
 
-                let oop_equity = self.equity_matrix[if player == 0 {
+                // Turn DL 也使用 flop-level matrix：turn-level matrix 太精确导致值极端，
+                // CFR 难以收敛。flop matrix 对所有 turn 取平均，更稳定。
+                let matrix = &self.equity_matrix;
+                let oop_equity = matrix[if player == 0 {
                     hi * num_villain + vi
                 } else {
                     vi * num_hero + hi
@@ -550,10 +609,37 @@ impl PostFlopGame {
                 cfv += cfreach_vi * base_equity;
             }
 
-            // 最终结果：cfv × factor（纯 equity 估值，不含位置/手牌系数）
+            // 最终结果：cfv × factor
             let chip_result = cfv * factor as f64;
 
-            result[hi] = chip_result as f32;
+            // Fold Equity bonus: 按桶差异化,让CFR学会选择bluff手牌
+            let abs_equity = if player == 0 {
+                cfv.abs() / factor as f64
+            } else {
+                (-cfv).abs() / factor as f64
+            };
+            let opponent_air = self.air_ratio[player ^ 1];
+
+            // 按桶确定 fold equity multiplier（桶6弱听牌最受益:有backdoor潜力）
+            let (c1, c2) = hero_cards[hi];
+            let flop = self.card_config.flop;
+            let (cat, draw) = classify_hand((c1, c2), flop, self.card_config.turn);
+            let bucket = HandBucket::classify(cat, draw, (c1, c2), flop);
+            let bucket_factor: f64 = match bucket {
+                HandBucket::WeakDraw => 0.22,   // 弱听牌: 最好的bluff候选
+                HandBucket::Trash => 0.15,      // 纯空气: 次选bluff
+                HandBucket::StrongDraw => 0.14, // 常规强听牌: 也可bluff
+                HandBucket::MediumMade => 0.06, // 中等成牌: 少量bluff价值
+                _ => 0.0,
+            };
+
+            let fe_bonus = if abs_equity < 0.6 && bucket_factor > 0.0 && player == 1 {
+                (1.0 - abs_equity) * bucket_factor * opponent_air * (half_pot as f64)
+            } else {
+                0.0
+            };
+
+            result[hi] = (chip_result + fe_bonus) as f32;
         }
     }
 }

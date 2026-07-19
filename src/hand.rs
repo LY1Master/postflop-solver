@@ -608,14 +608,33 @@ impl BoardCorrectionContext {
         Self { texture, is_turn: true }
     }
 
+    /// IP 位置进攻因子：赋予 IP 低 EV 手牌额外的 bluff 溢价。
+    #[inline]
+    fn ip_aggression_factor(bucket: HandBucket) -> f64 {
+        match bucket {
+            HandBucket::Trash => 1.10,
+            HandBucket::WeakDraw => 1.08,
+            HandBucket::MediumMade => 1.05,
+            HandBucket::GoodTopPair => 1.03,
+            HandBucket::StrongDraw => 1.05,
+            HandBucket::MonsterDraw => 1.03,
+            HandBucket::MonsterMade => 1.00,
+        }
+    }
+
     /// 查询修正系数 α。
     /// `position`: 0=OOP, 1=IP
     #[inline]
     pub fn alpha(&self, position: usize, bucket: HandBucket) -> f64 {
-        if self.is_turn {
+        let base = if self.is_turn {
             self.turn_alpha(position, bucket)
         } else {
             self.flop_alpha(position, bucket)
+        };
+        if !self.is_turn && position == 1 {
+            base * Self::ip_aggression_factor(bucket)
+        } else {
+            base
         }
     }
 
