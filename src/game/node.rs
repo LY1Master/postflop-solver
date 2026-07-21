@@ -240,4 +240,9 @@ impl PostFlopNode {
             )
         }
     }
+
+    #[inline]
+    pub(super) fn is_depth_limit_terminal(&self) -> bool {
+        self.player & PLAYER_DEPTH_LIMIT_FLAG != 0
+    }
 }

@@ -43,7 +43,9 @@ impl Game for PostFlopGame {
         player: usize,
         cfreach: &[f32],
     ) {
-        if self.bunching_num_dead_cards == 0 {
+        if node.is_depth_limit_terminal() {
+            self.evaluate_depth_limited(result, node, player, cfreach);
+        } else if self.bunching_num_dead_cards == 0 {
             self.evaluate_internal(result, node, player, cfreach);
         } else {
             self.evaluate_internal_bunching(result, node, player, cfreach);
@@ -335,6 +337,9 @@ impl PostFlopGame {
 
         self.state = State::MemoryAllocated;
         self.is_compression_enabled = enable_compression;
+        if self.tree_config.two_plies_lookahead && self.tree_config.depth_limit.is_some() {
+            self.compute_equity_matrix();
+        }
 
         self.clear_storage();
 

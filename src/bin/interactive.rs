@@ -164,6 +164,8 @@ fn prompt_config() -> (usize, Card, Card, CardConfig, TreeConfig) {
         add_allin_threshold: 1.5,
         force_allin_threshold: 0.15,
         merging_threshold: 0.1,
+        depth_limit: None,
+        two_plies_lookahead: false,
     };
 
     (hero, hero_c1, hero_c2, card_config, tree_config)

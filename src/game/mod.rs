@@ -45,6 +45,7 @@ pub struct PostFlopGame {
     // computed from configurations
     num_combinations: f64,
     initial_weights: [Vec<f32>; 2],
+    equity_matrix: Vec<f32>,
     private_cards: [Vec<(Card, Card)>; 2],
     same_hand_index: [Vec<u16>; 2],
 

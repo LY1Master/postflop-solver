@@ -322,3 +322,80 @@ impl PostFlopGame {
         }
     }
 }
+
+impl PostFlopGame {
+    /// 预计算flop-level equity矩阵(复用Flop DL的代码)
+    pub(super) fn compute_equity_matrix(&mut self) {
+        use crate::hand::Hand;
+        let num_oop = self.private_cards[0].len();
+        let num_ip = self.private_cards[1].len();
+        let flop = self.card_config.flop;
+        let flop_mask: u64 = (1<<flop[0])|(1<<flop[1])|(1<<flop[2]);
+        let remaining: Vec<u8> = (0..52u8).filter(|c|(1u64<<c)&flop_mask==0).collect();
+        let flop_hand = Hand::new().add_card(flop[0]as usize).add_card(flop[1]as usize).add_card(flop[2]as usize);
+        
+        use rayon::prelude::*;
+        let matrix: Vec<Vec<f32>> = (0..num_oop).into_par_iter().map(|hi|{
+            let (h1,h2)=self.private_cards[0][hi];
+            let hm=(1u64<<h1)|(1u64<<h2);
+            let hb=flop_hand.add_card(h1 as usize).add_card(h2 as usize);
+            let mut row=vec![0.0f32;num_ip];
+            for vi in 0..num_ip {
+                let (v1,v2)=self.private_cards[1][vi];
+                let vm=(1u64<<v1)|(1u64<<v2);
+                if hm&vm!=0{continue}
+                let km=flop_mask|hm|vm;
+                let vb=flop_hand.add_card(v1 as usize).add_card(v2 as usize);
+                let(mut w,mut l,mut c)=(0i32,0i32,0u32);
+                for i in 0..remaining.len(){
+                    let t=remaining[i];if(1u64<<t)&km!=0{continue}
+                    let h5=hb.add_card(t as usize);let v5=vb.add_card(t as usize);
+                    for j in i+1..remaining.len(){
+                        let r=remaining[j];if(1u64<<r)&km!=0{continue}
+                        let hr=h5.add_card(r as usize).evaluate();
+                        let vr=v5.add_card(r as usize).evaluate();
+                        if hr>vr{w+=1}else if hr<vr{l+=1};c+=1;
+                    }
+                }
+                if c>0{row[vi]=(w-l)as f32/c as f32;}
+            }
+            row
+        }).collect();
+        self.equity_matrix = matrix.into_iter().flatten().collect();
+    }
+
+    /// 方案C depth-limit终端估值
+    pub(super) fn evaluate_depth_limited(
+        &self, result: &mut [std::mem::MaybeUninit<f32>],
+        node: &PostFlopNode, player: usize, cfreach: &[f32],
+    ) {
+        let pot=(self.tree_config.starting_pot+2*node.amount)as f64;
+        let hp=0.5*pot;
+        let rake=if pot*self.tree_config.rake_rate<self.tree_config.rake_cap{pot*self.tree_config.rake_rate}else{self.tree_config.rake_cap};
+        let factor=((hp-0.5*rake)/self.num_combinations)as f32;
+        let nh=self.private_cards[player].len();
+        let nv=self.private_cards[player^1].len();
+        let hc=&self.private_cards[player];
+        let vc=&self.private_cards[player^1];
+        result.iter_mut().for_each(|v|{v.write(0.0);});
+        let result=unsafe{&mut*(result as*mut _ as*mut[f32])};
+        let mut cs=0.0f64;let mut cm=[0.0f64;52];
+        for vi in 0..nv{
+            let cf=cfreach[vi]as f64;if cf!=0.0{let(c1,c2)=vc[vi];cs+=cf;cm[c1 as usize]+=cf;cm[c2 as usize]+=cf;}
+        }
+        for hi in 0..nh{
+            let(c1,c2)=hc[hi];
+            let ecs=cs-cm[c1 as usize]-cm[c2 as usize];
+            if ecs==0.0{continue}
+            let mut cfv=0.0f64;
+            for vi in 0..nv{
+                let(v1,v2)=vc[vi];
+                if(1u64<<v1|1u64<<v2)&(1u64<<c1|1u64<<c2)!=0{continue}
+                let cf=cfreach[vi]as f64;if cf==0.0{continue}
+                let eq=self.equity_matrix[if player==0{hi*nv+vi}else{vi*nh+hi}];
+                cfv+=cf*(if player==0{eq as f64}else{-(eq as f64)});
+            }
+            result[hi]=(cfv*factor as f64)as f32;
+        }
+    }
+}

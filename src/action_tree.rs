@@ -12,6 +12,7 @@ pub(crate) const PLAYER_MASK: u8 = 3;
 pub(crate) const PLAYER_CHANCE_FLAG: u8 = 4; // chance_player = PLAYER_CHANCE_FLAG | prev_player
 pub(crate) const PLAYER_TERMINAL_FLAG: u8 = 8;
 pub(crate) const PLAYER_FOLD_FLAG: u8 = 24;
+pub(crate) const PLAYER_DEPTH_LIMIT_FLAG: u8 = 32;
 
 /// Available actions of the postflop game.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -131,6 +132,15 @@ pub struct TreeConfig {
     ///
     /// Personal recommendation: around `0.1`
     pub merging_threshold: f64,
+
+    /// Depth limit for solving. When set, the tree is truncated at the specified street.
+    /// `None` = full solve to showdown (default).
+    pub depth_limit: Option<BoardState>,
+
+    /// 2-Plies Lookahead (方案C):
+    /// 翻牌发起Bet后不立即截断，延伸2个plies(对手Fold/Call后),
+    /// 发转牌后再截断。Fold=直接赢pot, Call=eq×α+位置税。
+    pub two_plies_lookahead: bool,
 }
 
 /// A struct representing an abstract game tree.
@@ -487,6 +497,29 @@ impl ActionTree {
         if node.is_terminal() {
             // do nothing
         } else if node.is_chance() {
+            // 方案C: 2-Plies Lookahead: 翻牌chance(node)不截断,发转牌后截断
+            let is_two_plies_truncation = self.config.two_plies_lookahead
+                && self.config.depth_limit == Some(node.board_state)
+                && !info.allin_flag;
+
+            if is_two_plies_truncation {
+                // 方案C: 展开chance节点发转牌,转牌子节点标记为DL终端
+                let next_state = match node.board_state {
+                    BoardState::Flop => BoardState::Turn,
+                    BoardState::Turn => BoardState::River,
+                    BoardState::River => unreachable!(),
+                };
+                node.actions.push(Action::Chance(0));
+                let mut child = ActionTreeNode {
+                    player: PLAYER_TERMINAL_FLAG | PLAYER_DEPTH_LIMIT_FLAG,
+                    board_state: next_state,
+                    amount: node.amount,
+                    ..Default::default()
+                };
+                node.children.push(MutexLike::new(child));
+                return;
+            }
+
             let next_state = match node.board_state {
                 BoardState::Flop => BoardState::Turn,
                 BoardState::Turn => BoardState::River,
