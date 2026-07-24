@@ -39,8 +39,13 @@ fn main() {
     gf.back_to_root();gd.back_to_root();
     gf.cache_normalized_weights();gd.cache_normalized_weights();
 
+    // 方案C α修正
+    let texture = detect_board_texture(flop);
+    let ctx = BoardCorrectionContext::new(texture);
+    let bucket_labels = ["桶1:超强成牌","桶2:中等顶对","桶3:中等成牌","桶4:超强听牌","桶5:常规强听牌","桶6:弱听牌","桶7:纯空气"];
+
     let out_file = format!("doc/2plies_{}_SPR{}.csv",flop_str,spr);
-    let mut csv=String::from("位置,手牌,FullEV,DLEv,DLEv偏差%\n");
+    let mut csv=String::from("位置,手牌,大桶,FullEV,DLEv,DLEv_corrected,DLEv偏差%,修正后偏差%\n");
     for p in 0..2{
         let pos=if p==0{"OOP"}else{"IP"};
         let cards=gd.private_cards(p);
@@ -48,11 +53,17 @@ fn main() {
         let ev_d=gd.expected_values(p);
         let names=holes_to_strings(cards).unwrap();
         let mut rows:Vec<_>=(0..cards.len()).filter(|&i|ev_f[i]!=0.0).map(|i|{
-            let b=if ev_f[i].abs()>0.01{(ev_d[i]-ev_f[i])/ev_f[i]*100.0}else{0.0};
-            (names[i].clone(),ev_f[i],ev_d[i],b)
+            let(c1,c2)=cards[i];
+            let(cat,draw)=classify_hand((c1,c2),flop,NOT_DEALT);
+            let bkt=HandBucket::classify(cat,draw,(c1,c2),flop);
+            let alpha=ctx.alpha(p,bkt);
+            let corr=ev_d[i]*alpha as f32;
+            let db=if ev_f[i].abs()>0.01{(ev_d[i]-ev_f[i])/ev_f[i]*100.0}else{0.0};
+            let cb=if ev_f[i].abs()>0.01{(corr-ev_f[i])/ev_f[i]*100.0}else{0.0};
+            (names[i].clone(),bucket_labels[bkt as usize],ev_f[i],ev_d[i],corr,db,cb)
         }).collect();
-        rows.sort_by(|a,b|a.1.partial_cmp(&b.1).unwrap());
-        for(n,f,d,b)in &rows{csv.push_str(&format!("{},{},{:.2},{:.2},{:+.1}%\n",pos,n,f,d,b));}
+        rows.sort_by(|a,b|a.2.partial_cmp(&b.2).unwrap());
+        for(n,bk,f,d,c,db,cb)in &rows{csv.push_str(&format!("{},{},{},{:.2},{:.2},{:.2},{:+.1}%,{:+.1}%\n",pos,n,bk,f,d,c,db,cb));}
     }
     std::fs::write(&out_file,&csv).unwrap();
     println!("→ {}",out_file);
